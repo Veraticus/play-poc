@@ -1,16 +1,18 @@
 package controllers
 
 import java.net.{InetAddress, NetworkInterface}
+import java.time.Instant
 import javax.inject._
 
 import akka.actor.{ActorSystem, Address}
 import akka.cluster.Cluster
+import play.api.inject.ApplicationLifecycle
 import play.api.libs.json.Json
 import play.api.mvc._
 import play.api.{Configuration, Logger}
 
 import scala.collection.JavaConversions._
-import scala.concurrent.Await
+import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
 import scala.util.Try
 
@@ -19,7 +21,9 @@ import scala.util.Try
  * application's home page.
  */
 @Singleton
-class HomeController @Inject()(config: Configuration, system: ActorSystem) extends Controller {
+class HomeController @Inject()(app: ApplicationLifecycle, config: Configuration, system: ActorSystem) extends Controller {
+
+  import system.dispatcher
 
   val cluster = Cluster(system)
   val clusterPort = config.underlying.getInt("akka.remote.netty.tcp.port")
@@ -31,7 +35,16 @@ class HomeController @Inject()(config: Configuration, system: ActorSystem) exten
   Logger.info(s"Joining initial seed nodes: ${initialSeedNodes.mkString(", ")}")
   cluster.joinSeedNodes(initialSeedNodes)
 
+  app.addStopHook({ () =>
+    Logger.warn(s"Scheduling ${cluster.selfAddress} to leave cluster (received SIGTERM)")
+    cluster.leave(cluster.selfAddress)
+    Future {
+      Thread.sleep(3000)
+    }
+  })
+
   cluster.registerOnMemberRemoved({
+    Logger.warn(s"Removed ${cluster.selfAddress} from cluster")
     system.registerOnTermination(System.exit(0))
     system.terminate()
     new Thread {

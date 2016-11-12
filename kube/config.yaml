@@ -42,6 +42,11 @@ spec:
       containers:
       - name: play-poc-container
         image: play-poc:1.0-SNAPSHOT
+        env:
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
         ports:
         - containerPort: 2552
         - containerPort: 9000
@@ -50,11 +55,15 @@ spec:
           httpGet:
             path: /health
             port: 9000
-          initialDelaySeconds: 30
+          initialDelaySeconds: 10
           timeoutSeconds: 1
         readinessProbe:
           httpGet:
             path: /health
             port: 9000
-          initialDelaySeconds: 30
+          initialDelaySeconds: 10
           timeoutSeconds: 1
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "PID=`pidof java` && kill -SIGTERM $PID && while ps -p $PID > /dev/null; do sleep 5; done;"]

@@ -20,3 +20,5 @@ javaOptions in Universal ++= Seq(
   "-Dcom.sun.management.jmxremote.authenticate=false",
   "-Dcom.sun.management.jmxremote.ssl=false"
 )
+
+dockerBaseImage := "davidcaseria/akka-cluster"
