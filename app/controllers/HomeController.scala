@@ -21,30 +21,48 @@ import scala.util.Try
  * application's home page.
  */
 @Singleton
-class HomeController @Inject()(app: ApplicationLifecycle, config: Configuration, system: ActorSystem) extends Controller {
+class HomeController @Inject()(config: Configuration, lifecycle: ApplicationLifecycle, system: ActorSystem) extends Controller {
 
   import system.dispatcher
 
+  // Cluster information
   val cluster = Cluster(system)
   val clusterPort = config.underlying.getInt("akka.remote.netty.tcp.port")
   val hostAddress = NetworkInterface.getNetworkInterfaces
     .find(_.getName == "eth0")
     .flatMap(_.getInetAddresses.find(_.isSiteLocalAddress).map(_.getHostAddress))
     .getOrElse("127.0.0.1")
-  val initialSeedNodes = getSeedNodes
-  Logger.info(s"Joining initial seed nodes: ${initialSeedNodes.mkString(", ")}")
-  cluster.joinSeedNodes(initialSeedNodes)
 
-  app.addStopHook({ () =>
-    Logger.warn(s"Scheduling ${cluster.selfAddress} to leave cluster (received SIGTERM)")
+  // Join cluster
+  val seedNodes = {
+    val nodes = if (hostAddress == "127.0.0.1") {
+      List(Address("akka.tcp", system.name, hostAddress, clusterPort))
+    } else {
+      try {
+        InetAddress.getAllByName("play-poc-discovery-service.default.svc.cluster.local")
+          .map(a => Address("akka.tcp", system.name, a.getHostAddress, clusterPort)).toList
+      } catch {
+        case ex: Throwable =>
+          Logger.warn("Unable to connect to discovery service", ex)
+          List(Address("akka.tcp", system.name, hostAddress, clusterPort))
+      }
+    }
+    if (nodes.size > 1) nodes.filterNot(_.host.get == hostAddress) else nodes
+  }
+  Logger.info(s"Joining seed nodes: ${seedNodes.mkString(", ")}")
+  cluster.joinSeedNodes(seedNodes)
+
+  // Leave cluster
+  lifecycle.addStopHook({ () =>
+    Logger.warn(s"Received SIGTERM; leaving cluster (${cluster.selfAddress})")
     cluster.leave(cluster.selfAddress)
     Future {
-      Thread.sleep(3000)
+      Thread.sleep(5000)
     }
   })
 
   cluster.registerOnMemberRemoved({
-    Logger.warn(s"Removed ${cluster.selfAddress} from cluster")
+    Logger.warn(s"Removed from cluster (${cluster.selfAddress})")
     system.registerOnTermination(System.exit(0))
     system.terminate()
     new Thread {
@@ -55,22 +73,6 @@ class HomeController @Inject()(app: ApplicationLifecycle, config: Configuration,
       }
     }.start()
   })
-
-  private def getSeedNodes: List[Address] = {
-    val nodes = if (hostAddress == "127.0.0.1") {
-      List(Address("akka.tcp", system.name, hostAddress, clusterPort))
-    } else {
-      try {
-        InetAddress.getAllByName("play-poc-discovery-service.default.svc.cluster.local")
-          .map(a => Address("akka.tcp", system.name, a.getHostAddress, clusterPort)).toList
-      } catch {
-        case ex: Throwable =>
-          Logger.error("Unable to connect to discovery service", ex)
-          List(Address("akka.tcp", system.name, hostAddress, clusterPort))
-      }
-    }
-    if (nodes.size > 1) nodes.filterNot(_.host.get == hostAddress) else nodes
-  }
 
   def checkHealth = Action {
     implicit val writes = Json.writes[Address]
