@@ -16,6 +16,8 @@ import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
 import scala.util.Try
 
+import consul.Consul
+
 /**
  * This controller creates an `Action` to handle HTTP requests to the
  * application's home page.
@@ -61,7 +63,9 @@ class HomeController @Inject()(app: ApplicationLifecycle, config: Configuration,
       List(Address("akka.tcp", system.name, hostAddress, clusterPort))
     } else {
       try {
-        InetAddress.getAllByName("play-poc-discovery-service.default.svc.cluster.local")
+        var address = InetAddress.getByName("127.0.0.1").asInstanceOf[Inet4Address]
+        var c = new consul.Consul(address, 8500)
+        InetAddress.getAllByName("discovery.service.consul")
           .map(a => Address("akka.tcp", system.name, a.getHostAddress, clusterPort)).toList
       } catch {
         case ex: Throwable =>
